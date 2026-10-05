@@ -6,34 +6,26 @@
         title: 'По алфавиту',
         date: 'По дате выхода (новые сверху)'
     };
+    var stat = { calls: 0, total: 0, withDate: 0 };
 
     function active() {
         try { return Lampa.Activity.active(); } catch (e) { return null; }
     }
-
-    function isFav(act) {
-        return act && act.component === 'favorite';
-    }
-
-    // отдельный ключ для каждой вкладки (+ фильтр фильмы/сериалы, если есть)
-    function keyFor(act) {
-        return 'cfsort_' + (act.type || 'all') + (act.filter ? '_' + act.filter : '');
-    }
-
-    function getMode(act) {
-        return Lampa.Storage.get(keyFor(act), 'added');
-    }
+    function isFav(act) { return act && act.component === 'favorite'; }
+    function keyFor(type) { return 'cfsort_' + type; }
+    function getMode(type) { return Lampa.Storage.get(keyFor(type), 'added'); }
 
     function title(c) {
-        return (c.title || c.name || c.original_title || c.original_name || '').toLowerCase();
+        return String(c.title || c.name || c.original_title || c.original_name || '').toLowerCase();
     }
-
-    function date(c) {
-        return c.release_date || c.first_air_date || '';
-    }
+    function date(c) { return c.release_date || c.first_air_date || ''; }
 
     function sortCards(list, mode) {
-        if (!Array.isArray(list) || mode === 'added') return list;
+        if (!Array.isArray(list)) return list;
+        stat.calls++;
+        stat.total = list.length;
+        stat.withDate = list.filter(date).length;
+        if (mode === 'added') return list;
         var arr = list.slice();
         if (mode === 'title') {
             arr.sort(function (a, b) {
@@ -55,26 +47,24 @@
         var prev = Lampa.Favorite.get;
         Lampa.Favorite.get = function (params) {
             var res = prev.apply(this, arguments);
-            var act = active();
-            // сортируем только когда открыта страница закладок этой же вкладки
-            if (params && isFav(act) && act.type === params.type) {
-                return sortCards(res, getMode(act));
+            if (params && params.type) {
+                return sortCards(res, getMode(params.type));
             }
             return res;
         };
     }
 
     function refresh(act) {
+        var copy = {};
+        ['url', 'title', 'component', 'type', 'filter', 'source'].forEach(function (k) {
+            if (act[k] !== undefined) copy[k] = act[k];
+        });
+        copy.page = 1;
         try {
-            Lampa.Activity.replace({ page: 1 });
+            Lampa.Activity.replace(copy);
         } catch (e) {
-            var copy = {};
-            ['url', 'title', 'component', 'type', 'filter', 'page'].forEach(function (k) {
-                if (act[k] !== undefined) copy[k] = act[k];
-            });
-            copy.page = 1;
             Lampa.Activity.back();
-            setTimeout(function () { Lampa.Activity.push(copy); }, 100);
+            setTimeout(function () { Lampa.Activity.push(copy); }, 150);
         }
     }
 
@@ -82,21 +72,29 @@
         var act = active();
         if (!isFav(act)) return;
 
-        var current = getMode(act);
-        var prev = Lampa.Controller.enabled().name;
+        var type = act.type;
+        var current = getMode(type);
+        var prevCtrl = Lampa.Controller.enabled().name;
 
         Lampa.Select.show({
             title: 'Сортировка',
             items: Object.keys(MODES).map(function (k) {
                 return { title: MODES[k], value: k, selected: k === current };
             }),
-            onBack: function () {
-                Lampa.Controller.toggle(prev);
-            },
+            onBack: function () { Lampa.Controller.toggle(prevCtrl); },
             onSelect: function (item) {
-                Lampa.Storage.set(keyFor(act), item.value);
-                Lampa.Controller.toggle(prev);
+                Lampa.Storage.set(keyFor(type), item.value);
+                Lampa.Controller.toggle(prevCtrl);
+                stat.calls = 0;
                 refresh(act);
+                setTimeout(function () {
+                    Lampa.Noty.show(
+                        MODES[item.value] + ' | вкладка: ' + type +
+                        ' | вызовов: ' + stat.calls +
+                        ' | карточек: ' + stat.total +
+                        ' | с датой: ' + stat.withDate
+                    );
+                }, 1500);
             }
         });
     }
@@ -108,19 +106,12 @@
             '<path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' +
             '</svg></div>'
         );
-
         btn.on('hover:enter click', openMenu);
         $('.head .head__actions').prepend(btn);
-
-        // показываем кнопку только на страницах закладок
-        setInterval(function () {
-            btn.toggle(isFav(active()));
-        }, 700);
+        setInterval(function () { btn.toggle(isFav(active())); }, 700);
     }
 
     function start() {
-        // ждём, пока плагин закладок поставит свою обёртку Favorite.get,
-        // чтобы наша была поверх неё
         var tries = 0;
         var timer = setInterval(function () {
             tries++;
